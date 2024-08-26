@@ -1,0 +1,7 @@
+*.netlink_test*
+*.o
+*.ko
+*.mod*
+*.cmd
+*.symvers
+*.order
