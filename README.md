@@ -7,11 +7,10 @@ This repository provides kernel modules for embedded linux kernel (tested on mil
 git clone https://github.com/marcosraimondi1/milkv-duo-dev-modules.git my-modules
 cd my-modules
 ```
-2. Export the sdk directory variable, this is necessary to use the same toolchain:
+2. Export the sdk directory variable in the [envsetup.sh](./envsetup.sh) file, this is necessary to use the same toolchain:
 ```bash
-export SDK_DIR?=/path/to/duo-buildroot-sdk 
+SDK_DIR=/path/to/duo-buildroot-sdk
 ```
-
 If not using the duo sdk you can skip this step and the next one. 
 Just make sure to export the following variables into your system:
 ```bash
