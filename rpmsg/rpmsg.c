@@ -18,7 +18,7 @@
 #define MESSAGE_SIZE        4080
 #define NUM_MESSAGES        2300
 
-static char msg[MESSAGE_SIZE] = {'a'};
+static char msg[MESSAGE_SIZE];
 static ktime_t start_time = 0;
 
 struct instance_data {
@@ -29,6 +29,14 @@ static int rpmsg_sample_cb(struct rpmsg_device *rpdev, void *data, int len, void
 {
 	int ret;
 	struct instance_data *idata = dev_get_drvdata(&rpdev->dev);
+
+	// check received data
+	if (MESSAGE_SIZE != len || memcmp(data, msg, MESSAGE_SIZE)) {
+		dev_err(&rpdev->dev, "data integrity check failed\n");
+		pr_err("data: %s\n", (char *)data);
+		pr_err("expected %d bytes, received %d bytes\n", MESSAGE_SIZE, len);
+		return -EINVAL;
+	}
 
 	++idata->rx_count;
 
@@ -56,7 +64,7 @@ static int rpmsg_sample_cb(struct rpmsg_device *rpdev, void *data, int len, void
 
 static int rpmsg_sample_probe(struct rpmsg_device *rpdev)
 {
-	int ret;
+	int i, ret;
 	struct instance_data *idata;
 
 	dev_info(&rpdev->dev, "new channel: 0x%x -> 0x%x!\n", rpdev->src, rpdev->dst);
@@ -71,6 +79,13 @@ static int rpmsg_sample_probe(struct rpmsg_device *rpdev)
 	dev_set_drvdata(&rpdev->dev, idata);
 
 	start_time = ktime_get();
+
+	printk("starting speed test\n");
+	/* prepare the message */
+	for (i = 0; i < MESSAGE_SIZE; i++) {
+		msg[i] = 'c';
+	}
+	msg[MESSAGE_SIZE - 1] = '\0'; /* null-terminate the message */
 
 	/* send a message to our remote processor */
 	ret = rpmsg_send(rpdev->ept, msg, MESSAGE_SIZE);

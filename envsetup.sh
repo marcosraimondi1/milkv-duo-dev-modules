@@ -1,7 +1,7 @@
 #!/bin/bash
 
 CURRENT_DIR=$(pwd)
-SDK_DIR=/home/marcos/facu/tesis/SDKs/duo-buildroot-sdk
+SDK_DIR=$CURRENT_DIR/../duo-buildroot-sdk
 cd $SDK_DIR
 source $SDK_DIR/device/milkv-duo256m-sd/boardconfig.sh > /dev/null
 source $SDK_DIR/build/milkvsetup.sh > /dev/null
