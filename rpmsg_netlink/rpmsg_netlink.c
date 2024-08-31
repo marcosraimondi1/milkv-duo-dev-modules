@@ -47,7 +47,7 @@ static void send_msg_to_userspace(char *msg, int msg_size, struct sock *nl_sock,
 	// put received message into reply
 	nlh = nlmsg_put(skb_out, 0, 0, NLMSG_DONE, msg_size, 0);
 	NETLINK_CB(skb_out).dst_group = 0; /* not in mcast group */
-	strncpy(nlmsg_data(nlh), msg, msg_size);
+	memcpy(nlmsg_data(nlh), msg, msg_size);
 
 	pr_debug("rpmsg_netlink: Sending user %s\n", msg);
 
@@ -98,17 +98,13 @@ static void netlink_recv_cb(struct sk_buff *skb)
 	nlh = (struct nlmsghdr *)skb->data;
 	data->client_pid = nlh->nlmsg_pid; /* pid of sending process */
 	msg = (char *)nlmsg_data(nlh);
-	msg_size = strlen(msg);
+	msg_size = nlmsg_len(nlh);
 
 	pr_debug("rpmsg_netlink: Received from pid %d: %s\n", data->client_pid, msg);
 
 	if (rpmsg_dev) {
 		msg_cnt++;
 		send_rpmsg(rpmsg_dev, msg, msg_size);
-	}
-
-	if (msg_cnt % 50 == 0) {
-		pr_info("rpmsg_netlink: %d messages sent\n", msg_cnt);
 	}
 }
 
