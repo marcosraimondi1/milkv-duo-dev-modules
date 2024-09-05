@@ -9,15 +9,16 @@
  * Brian Swetland <swetland@google.com>
  */
 
+#include "linux/string.h"
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/rpmsg.h>
 #include <linux/ktime.h>
 
-// #define RPMSG_ENDPOINT_NAME "rpmsg-client-sample"
-#define RPMSG_ENDPOINT_NAME "rpmsg-nocopy"
-#define MESSAGE_SIZE        112
-#define NUM_MESSAGES        2300
+// #define RPMSG_ENDPOINT_NAME "rpmsg-nocopy"
+#define RPMSG_ENDPOINT_NAME "rpmsg-client-sample"
+#define MESSAGE_SIZE        496
+#define NUM_MESSAGES        10000
 
 static char msg[MESSAGE_SIZE];
 static ktime_t start_time = 0;
@@ -26,17 +27,14 @@ struct instance_data {
 	int rx_count;
 };
 
-static ktime_t start_current_time = 0;
-static s64 elapsed_roundtrip_time = 0;
 static int rpmsg_sample_cb(struct rpmsg_device *rpdev, void *data, int len, void *priv, u32 src)
 {
 	int ret;
+	s64 elapsed;
+	ktime_t end_time;
 	struct instance_data *idata = dev_get_drvdata(&rpdev->dev);
 
-	ktime_t end_current_time, roundtrip_current_time;
-	end_current_time = ktime_get();
-	roundtrip_current_time = ktime_to_ns(ktime_sub(end_current_time, start_current_time));
-	elapsed_roundtrip_time += roundtrip_current_time;
+	++idata->rx_count;
 
 	// check received data
 	if (MESSAGE_SIZE != len || memcmp(data, msg, MESSAGE_SIZE)) {
@@ -46,25 +44,20 @@ static int rpmsg_sample_cb(struct rpmsg_device *rpdev, void *data, int len, void
 		return -EINVAL;
 	}
 
-	++idata->rx_count;
-
 	/* samples should not live forever */
 	if (idata->rx_count >= NUM_MESSAGES) {
-		ktime_t end_time = ktime_get();
-		s64 elapsed = ktime_to_ns(ktime_sub(end_time, start_time));
+		end_time = ktime_get();
+		elapsed = ktime_to_ns(ktime_sub(end_time, start_time));
 		printk("\n--------- TEST RESULTS ---------------\n");
 		printk("messages: %d\n", NUM_MESSAGES);
 		printk("message size: %d\n", MESSAGE_SIZE);
 		printk("elapsed time: %lld us\n", elapsed / 1000);
-		printk("elapsed roundtrip time: %lld us\n", elapsed_roundtrip_time / 1000);
 
-		dev_info(&rpdev->dev, "goodbye!\n");
+		rpmsg_send(rpdev->ept, "end", 4);
 		return 0;
 	}
 
 	/* send a new message now */
-
-	start_current_time = ktime_get();
 	ret = rpmsg_send(rpdev->ept, msg, MESSAGE_SIZE);
 	if (ret) {
 		dev_err(&rpdev->dev, "rpmsg_send failed: %d\n", ret);
@@ -89,8 +82,6 @@ static int rpmsg_sample_probe(struct rpmsg_device *rpdev)
 
 	dev_set_drvdata(&rpdev->dev, idata);
 
-	start_time = ktime_get();
-
 	printk("starting speed test\n");
 	/* prepare the message */
 	for (i = 0; i < MESSAGE_SIZE; i++) {
@@ -99,7 +90,8 @@ static int rpmsg_sample_probe(struct rpmsg_device *rpdev)
 	msg[MESSAGE_SIZE - 1] = '\0'; /* null-terminate the message */
 
 	/* send a message to our remote processor */
-	start_current_time = ktime_get();
+	ret = rpmsg_send(rpdev->ept, "init", 5);
+	start_time = ktime_get();
 	ret = rpmsg_send(rpdev->ept, msg, MESSAGE_SIZE);
 	if (ret) {
 		dev_err(&rpdev->dev, "rpmsg_send failed: %d\n", ret);
