@@ -23,7 +23,9 @@ static void send_msg_to_userspace(char *msg, int msg_size, int pid)
 	// put received message into reply
 	nlh = nlmsg_put(skb_out, 0, 0, NLMSG_DONE, msg_size, 0);
 	NETLINK_CB(skb_out).dst_group = 0; /* not in mcast group */
-	strncpy(nlmsg_data(nlh), msg, msg_size);
+	memcpy(nlmsg_data(nlh), msg, msg_size);
+
+	printk("netlink_test: Send %d bytes to pid %d\n", nlh->nlmsg_len - NLMSG_HDRLEN, pid);
 
 	printk(KERN_INFO "netlink_test: Send %s\n", msg);
 
@@ -43,10 +45,10 @@ static void netlink_test_recv_msg(struct sk_buff *skb)
 	nlh = (struct nlmsghdr *)skb->data;
 	pid = nlh->nlmsg_pid; /* pid of sending process */
 	msg = (char *)nlmsg_data(nlh);
-	msg_size = strlen(msg);
+	msg_size = nlh->nlmsg_len - NLMSG_HDRLEN;
 
-	printk(KERN_INFO "netlink_test: Received from pid %d: %s\n", pid, msg);
-	send_msg_to_userspace("received", 8, pid);
+	printk(KERN_INFO "netlink_test: Received %d bytes from pid %d: %s\n", msg_size, pid, msg);
+	send_msg_to_userspace(msg, msg_size, pid);
 }
 
 static int __init netlink_test_init(void)

@@ -15,7 +15,7 @@
 #include <linux/skbuff.h>
 
 #define NETLINK_USER        17
-#define RPMSG_ENDPOINT_NAME "rpmsg-netlink"
+#define RPMSG_ENDPOINT_NAME "rpmsg-tflite"
 
 struct rpmsg_device *rpmsg_dev = NULL;
 struct driver_data {
@@ -206,6 +206,7 @@ static struct rpmsg_driver rpmsg_client = {
  */
 static int __init rpmsg_netlink_init(void)
 {
+	pr_info("rpmsg_netlink: ept=%s netlink_id=%d\n", RPMSG_ENDPOINT_NAME, NETLINK_USER);
 	return register_rpmsg_driver(&rpmsg_client);
 }
 
