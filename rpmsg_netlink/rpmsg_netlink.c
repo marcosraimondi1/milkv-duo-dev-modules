@@ -16,6 +16,7 @@
 
 #define NETLINK_USER        17
 #define RPMSG_ENDPOINT_NAME "rpmsg-tflite"
+#define DRIVER_NAME         "rpmsg_netlink_tflite"
 
 struct rpmsg_device *rpmsg_dev = NULL;
 struct driver_data {
@@ -192,7 +193,7 @@ static struct rpmsg_device_id rpmsg_driver_id_table[] = {
 MODULE_DEVICE_TABLE(rpmsg, rpmsg_driver_id_table);
 
 static struct rpmsg_driver rpmsg_client = {
-	.drv.name = KBUILD_MODNAME,
+	.drv.name = DRIVER_NAME,
 	.drv.owner = THIS_MODULE,
 	.id_table = rpmsg_driver_id_table,
 	.callback = rpmsg_recv_cb,
