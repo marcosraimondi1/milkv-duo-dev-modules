@@ -223,6 +223,7 @@ struct netlink_kernel_cfg cfg = {
 static int rpmsg_netlink_probe(struct rpmsg_device *rpdev)
 {
 	struct driver_data *data;
+	char empty_msg[] = "";
 
 	// save rpmsg device
 	rpmsg_dev = rpdev;
@@ -246,6 +247,9 @@ static int rpmsg_netlink_probe(struct rpmsg_device *rpdev)
 
 	// save netlink socket
 	dev_set_drvdata(&rpdev->dev, data);
+
+	// send first sync message to complete ept creation
+	send_rpmsg(rpmsg_dev, empty_msg, sizeof(empty_msg));
 
 	return 0;
 }
