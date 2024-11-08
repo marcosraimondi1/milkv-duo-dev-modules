@@ -1,0 +1,7 @@
+*.rpmsg_netlink*
+*.o
+*.ko
+*.mod*
+*.cmd
+*.symvers
+*.order

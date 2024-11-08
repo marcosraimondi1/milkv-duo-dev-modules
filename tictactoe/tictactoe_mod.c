@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Remote processor messaging module with netlink
+ * and a character device
  *
  * Marcos Raimondi <marcosraimondi1@gmail.com>
  */
@@ -13,10 +14,26 @@
 #include <linux/rpmsg.h>
 #include <linux/netlink.h>
 #include <linux/skbuff.h>
+#include <linux/fs.h>
+#include <linux/uaccess.h>
+#include <linux/cdev.h>
+#include <linux/device.h>
+#include <linux/slab.h>
 
 #define NETLINK_USER        17
-#define RPMSG_ENDPOINT_NAME "rpmsg-netlink"
-#define DRIVER_NAME         "rpmsg_netlink"
+#define RPMSG_ENDPOINT_NAME "rpmsg-ttt"
+#define DRIVER_NAME         "tictactoe-mod"
+
+#define CLASS_NAME  "rpmsg_class_ttt"
+#define DEVICE_NAME "ttt_char_dev"
+#define BUFFER_SIZE 1024
+
+static struct cdev rpmsg_cdev;
+static dev_t dev_num;
+static char msg_buffer[BUFFER_SIZE];
+static int msg_len;
+static struct class *rpmsg_class;
+static struct device *rpmsg_device;
 
 struct rpmsg_device *rpmsg_dev = NULL;
 struct driver_data {
@@ -24,7 +41,100 @@ struct driver_data {
 	int client_pid;
 };
 
-static int msg_cnt = 0;
+static void send_rpmsg(struct rpmsg_device *rpdev, char *msg, int len);
+
+/**
+ * @brief Escribir mensaje al dispositivo de caracter y enviarlo al procesador remoto
+ * @param filep Puntero al archivo
+ * @param buffer Puntero al buffer en el espacio de usuario
+ * @param len Tamaño del buffer
+ * @param offset Puntero al offset
+ * @return Número de bytes escritos o error
+ */
+static ssize_t rpmsg_dev_write(struct file *filep, const char __user *buffer, size_t len,
+			       loff_t *offset)
+{
+	int ret;
+
+	// Verificar si el mensaje es demasiado largo para el buffer
+	if (len > BUFFER_SIZE - 1) {
+		pr_err("rpmsg_char_dev: Mensaje demasiado largo\n");
+		return -EINVAL;
+	}
+
+	// Copiar los datos del espacio de usuario al buffer del kernel
+	ret = copy_from_user(msg_buffer, buffer, len);
+	if (ret) {
+		pr_err("rpmsg_char_dev: Error al copiar datos desde el espacio de usuario\n");
+		return -EFAULT;
+	}
+
+	pr_debug("rpmsg_char_dev: Enviando mensaje\n");
+
+	// Enviar el mensaje al procesador remoto si el dispositivo RPMsg está disponible
+	if (rpmsg_dev) {
+		send_rpmsg(rpmsg_dev, msg_buffer, len);
+	} else {
+		pr_err("rpmsg_char_dev: Dispositivo RPMsg no disponible\n");
+		return -ENODEV;
+	}
+
+	return len;
+}
+
+/**
+ * @brief Leer el mensaje desde el dispositivo de caracter
+ * @param filep Puntero al archivo
+ * @param buffer Puntero al buffer en el espacio de usuario
+ * @param len Tamano del buffer
+ * @param offset Puntero al offset
+ * @return Numero de bytes leidos
+ */
+static ssize_t rpmsg_dev_read(struct file *filep, char __user *buffer, size_t len, loff_t *offset)
+{
+	int ret;
+
+	// Verificar si ya se ley0 el mensaje completo
+	if (*offset >= msg_len) {
+		return 0; // Fin del archivo
+	}
+
+	// Ajustar la longitud si es necesario
+	if (len > msg_len - *offset) {
+		len = msg_len - *offset;
+	}
+
+	// Copiar el mensaje al espacio de usuario
+	ret = copy_to_user(buffer, msg_buffer + *offset, len);
+	if (ret) {
+		pr_err("rpmsg_char_dev: Error al copiar los datos al espacio de usuario\n");
+		return -EFAULT;
+	}
+
+	// Actualizar el offset
+	*offset += len;
+
+	return len;
+}
+
+static int rpmsg_dev_open(struct inode *inodep, struct file *filep)
+{
+	return 0;
+}
+
+static int rpmsg_dev_release(struct inode *inodep, struct file *filep)
+{
+	return 0;
+}
+
+// Definir las operaciones del dispositivo
+static struct file_operations fops = {
+	.owner = THIS_MODULE,
+	.open = rpmsg_dev_open,
+	.read = rpmsg_dev_read,
+	.write = rpmsg_dev_write,
+	.release = rpmsg_dev_release,
+};
 
 /**
  * @brief Send a message to userspace
@@ -104,7 +214,6 @@ static void netlink_recv_cb(struct sk_buff *skb)
 	pr_debug("rpmsg_netlink: Received from pid %d: %s\n", data->client_pid, msg);
 
 	if (rpmsg_dev) {
-		msg_cnt++;
 		send_rpmsg(rpmsg_dev, msg, msg_size);
 	}
 }
@@ -125,6 +234,16 @@ static int rpmsg_recv_cb(struct rpmsg_device *rpdev, void *data, int len, void *
 	pr_debug("rpmsg_netlink: (src: 0x%x) %s\n", src, (char *)data);
 
 	drv_data = dev_get_drvdata(&rpdev->dev);
+
+	// Guardar el mensaje en el buffer
+	msg_len = len;
+	if (msg_len > BUFFER_SIZE - 1) {
+		msg_len = BUFFER_SIZE - 1;
+	}
+	memcpy(msg_buffer, data, msg_len);
+	msg_buffer[msg_len] = '\0'; // Asegurarse de que termine en null
+
+	// Enviar a userspace por Netlink si hay un usuario conectado
 	if (drv_data->client_pid > 0) {
 		send_msg_to_userspace(data, len, drv_data->nl_sk, drv_data->client_pid);
 	} else {
@@ -146,6 +265,7 @@ struct netlink_kernel_cfg cfg = {
 static int rpmsg_netlink_probe(struct rpmsg_device *rpdev)
 {
 	struct driver_data *data;
+	char empty_msg[] = "";
 
 	// save rpmsg device
 	rpmsg_dev = rpdev;
@@ -170,7 +290,8 @@ static int rpmsg_netlink_probe(struct rpmsg_device *rpdev)
 	// save netlink socket
 	dev_set_drvdata(&rpdev->dev, data);
 
-	msg_cnt = 0;
+	// send first sync message to complete ept creation
+	send_rpmsg(rpmsg_dev, empty_msg, sizeof(empty_msg));
 
 	return 0;
 }
@@ -201,23 +322,65 @@ static struct rpmsg_driver rpmsg_client = {
 	.remove = rpmsg_netlink_remove,
 };
 
-/**
- * @brief Initialize the module
- * @return int
- */
 static int __init rpmsg_netlink_init(void)
 {
-	pr_info("rpmsg_netlink: ept=%s netlink_id=%d\n", RPMSG_ENDPOINT_NAME, NETLINK_USER);
+	int ret;
+
+	pr_info("rpmsg_netlink: Iniciando el módulo\n");
+
+	// Asignar un numero mayor y menor para el dispositivo
+	ret = alloc_chrdev_region(&dev_num, 0, 1, DEVICE_NAME);
+	if (ret < 0) {
+		pr_err("rpmsg_char_dev: No se pudo asignar el número de dispositivo\n");
+		return ret;
+	}
+
+	// Crear una clase para el dispositivo
+	rpmsg_class = class_create(THIS_MODULE, CLASS_NAME);
+	if (IS_ERR(rpmsg_class)) {
+		unregister_chrdev_region(dev_num, 1);
+		pr_err("rpmsg_char_dev: No se pudo crear la clase\n");
+		return PTR_ERR(rpmsg_class);
+	}
+
+	// Crear el dispositivo
+	rpmsg_device = device_create(rpmsg_class, NULL, dev_num, NULL, DEVICE_NAME);
+	if (IS_ERR(rpmsg_device)) {
+		class_destroy(rpmsg_class);
+		unregister_chrdev_region(dev_num, 1);
+		pr_err("rpmsg_char_dev: No se pudo crear el dispositivo\n");
+		return PTR_ERR(rpmsg_device);
+	}
+
+	// Inicializar y agregar el dispositivo de caracter
+	cdev_init(&rpmsg_cdev, &fops);
+	ret = cdev_add(&rpmsg_cdev, dev_num, 1);
+	if (ret < 0) {
+		device_destroy(rpmsg_class, dev_num);
+		class_destroy(rpmsg_class);
+		unregister_chrdev_region(dev_num, 1);
+		pr_err("rpmsg_char_dev: No se pudo agregar el dispositivo\n");
+		return ret;
+	}
+
+	pr_info("rpmsg_char_dev: Dispositivo registrado correctamente\n");
+
 	return register_rpmsg_driver(&rpmsg_client);
 }
 
 /**
- * @brief Exit the module
+ * @brief Salir del modulo
  */
 static void __exit rpmsg_netlink_exit(void)
 {
+	// Eliminar el dispositivo de carácter
+	cdev_del(&rpmsg_cdev);
+	device_destroy(rpmsg_class, dev_num);
+	class_destroy(rpmsg_class);
+	unregister_chrdev_region(dev_num, 1);
+
 	unregister_rpmsg_driver(&rpmsg_client);
-	pr_info("rpmsg_netlink: Exited module\n");
+	pr_info("rpmsg_netlink: Módulo cerrado\n");
 }
 
 module_init(rpmsg_netlink_init);
